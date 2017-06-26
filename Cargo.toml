@@ -1,0 +1,18 @@
+[package]
+name = "dcml"
+version = "0.0.0"
+authors = [ "Greg V <greg@unrelenting.technology>" ]
+categories = [ "config", "encoding", "parser-implementations" ]
+keywords = [ "config", "encoding", "configuration" ]
+description = "Dynamic Config Markup Language, a friendly configuration syntax"
+license = "Unlicense"
+readme = "README.md"
+homepage = "https://github.com/myfreeweb/dcml"
+repository = "https://github.com/myfreeweb/dcml"
+
+[dependencies]
+#serde = "1"
+error-chain = "0.10"
+im = "4"
+num = "0.1"
+pest = "0.4"
