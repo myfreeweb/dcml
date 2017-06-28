@@ -12,7 +12,6 @@ repository = "https://github.com/myfreeweb/dcml"
 
 [dependencies]
 #serde = "1"
-error-chain = "0.10"
 im = "4"
 num = "0.1"
-pest = "0.4"
+combine = "2.3"

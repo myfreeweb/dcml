@@ -1,14 +1,9 @@
-#![recursion_limit="1000"]
-
 extern crate num;
 extern crate im;
-#[macro_use]
-extern crate pest;
-#[macro_use]
-extern crate error_chain;
+extern crate combine;
 
 pub mod value {
-    pub use num::BigRational;
+    pub use num::{BigInt, BigRational};
     pub use im::{List, Map};
     use std::fmt;
 
@@ -51,99 +46,108 @@ pub mod value {
     }
 }
 
-pub mod errors {
-    error_chain! {
-        errors { FloatToRationalError }
-        foreign_links {
-            BigInt(::num::bigint::ParseBigIntError);
-            Float(::std::num::ParseFloatError);
-        }
-    }
-}
+pub mod parser {
+    use std;
+    use std::borrow::Cow;
+    use num::*;
+    use num::bigint::ParseBigIntError;
+    use super::value::*;
+    use combine::Parser;
+    use combine::primitives::{ParseResult, Stream};
+    use combine::combinator::{between, many, many1, optional, try, parser};
+    use combine::char::{alpha_num, digit, hex_digit, spaces, char, string};
 
-use pest::prelude::*;
-use num::*;
-use value::*;
-use errors::*;
-
-impl_rdp! {
-    grammar! {
-        expression = _{
-            //{ void | ["("] ~ expression ~ [")"] | tagged | array | dict | vardecl | number | text | interptext }
-            { void | ["("] ~ expression ~ [")"] | tagged | array | number }
-            //addition       = { plus  | minus }
-            //multiplication = { times | slash | percent }
-        }
-        void = { ["()"] }
-        tagged = {< tag ~ expression }
-
-        number = _{ hex | bin | float | dec }
-        hex    = @{ ["-"]? ~ ["0x"] ~ hexdigit+ }
-        hexdigit  = _{ ['0'..'9'] | ['a'..'f'] | ['A'..'F'] | ["_"] }
-        bin    = @{ ["-"]? ~ ["0b"] ~ bindigit+ }
-        bindigit = _{ ['0'..'1'] | ["_"] }
-        float  = @{ ["-"]? ~ decdigit* ~ ["."] ~ decdigit+ }
-        dec    = @{ ["-"]? ~ decdigit+ }
-        decdigit = _{ ['0'..'9'] | ["_"] }
-
-        // text    = @{ ["\""] ~ (escape | !(["\""] | ["\\"]) ~ any)* ~ ["\""] }
-        // interptext = @{ ["`"] ~ (escape | !(["`"] | ["\\"]) ~ any)* ~ ["`"] }
-        // escape  = { ["\\"] ~ (["\""] | ["\\"] | ["/"] | ["t"] | ["n"] | ["r"] | ["b"] | ["f"] | uchar) }
-        // uchar   = { ["u"] ~ hexdigit ~ hexdigit ~ hexdigit ~ hexdigit }
-
-        array = { ["["] ~ arritem* ~ ["]"] }
-        arritem = { array | expression }
-
-        // dict = { ["{"] ~ pair* ~ ["}"] }
-        // pair = { id ~ expression }
-
-        tag = @{ ["#"] ~ id }
-
-        //vardecl = { ["let"] ~ id ~ ["="] ~ expression }
-
-        id = @{ (['a'..'z'] | ['A'..'Z'] | ['0'..'9'])+ }
-
-        // plus   = { ["+"] }
-        // minus  = { ["-"] }
-        // times  = { ["*"] }
-        // slash  = { ["/"] }
-        // percent = { ["%"] }
-
-        whitespace = _{ [" "] | ["\t"] | ["\n"] | ["\r"] | ["\u{000C}"] }
-        comment = _{ ["//"] ~ (!(["\n"] | ["\r"]) ~ any)* ~ (["\n"] | ["\r\n"] | ["\r"] | eoi) }
+    #[inline]
+    fn bigint(sgn: Option<char>, digits: String, radix: u32) -> Result<BigInt, ParseBigIntError> {
+        BigInt::from_str_radix(&(sgn.map(|x: char| x.to_string()).unwrap_or("".to_string()) + &digits.replace("_", "")), radix)
     }
 
-    process! {
-        eval(&self) -> Result<Value> {
-            (_: void) => { Ok(Value::Void) },
-
-            (&d: dec) => { Ok(Value::Number(BigRational::from_integer(BigInt::from_str_radix(&d.replace("_", ""), 10)?))) },
-            (&h: hex) => { Ok(Value::Number(BigRational::from_integer(BigInt::from_str_radix(&h.replace("_", "").replace("0x", ""), 16)?))) },
-            (&b: bin) => { Ok(Value::Number(BigRational::from_integer(BigInt::from_str_radix(&b.replace("_", "").replace("0b", ""), 2)?))) },
-            (&f: float) => { Ok(Value::Number(BigRational::from_float(f.replace("_", "").parse::<f64>()?).ok_or(ErrorKind::FloatToRationalError)?)) },
-
-            (_: tagged, _: tag, &t: id, e: eval()) => { Ok(Value::Tagged(t.to_owned(), Box::new(e?))) },
-
-            (_: array, a: _array()) => { Ok(Value::Array(a?)) },
+    #[inline]
+    fn parse_bigint(sgn: Option<char>, digits: String, radix: u32) -> Value {
+        if let Ok(bint) = bigint(sgn, digits, radix) {
+            Value::Number(BigRational::from_integer(bint))
+        } else {
+            panic!("BigInt parse");
         }
+    }
 
-        _array(&self) -> Result<List<Value>> {
-            (_: arritem, head: eval(), tail: _array()) => { Ok(tail?.push_front(head?)) },
-            () => { Ok(List::new()) },
+    #[inline]
+    fn float(sgn: Option<char>, l: Option<String>, r: String) -> Result<f64, std::num::ParseFloatError> {
+        (sgn.map(|x: char| x.to_string()).unwrap_or("".to_string()) + &l.unwrap_or("0".to_string()) + "." + &r)
+            .replace("_", "")
+            .parse::<f64>()
+    }
+
+    #[inline]
+    fn parse_float(sgn: Option<char>, l: Option<String>, r: String) -> Value {
+        if let Ok(f) = float(sgn, l, r) {
+            if let Some(br) = BigRational::from_float(f) {
+                Value::Number(br)
+            } else {
+                panic!("BigRational from float");
+            }
+        } else {
+            panic!("float parse");
         }
+    }
+
+
+    pub fn eval<I>(input: I) -> ParseResult<Value, I>
+        where I: Stream<Item = char>
+    {
+        let recur = || parser(eval::<I>);
+        let lex_char = |c| char(c).skip(spaces());
+        let ident = many1(alpha_num());
+
+        let void = string("()").map(|_| Value::Void);
+
+        let signum = || optional(char('-').or(char('+')));
+        let decimal = signum().then(|sgn| many1(digit().or(char('_'))).map(move |digits| parse_bigint(sgn, digits, 10)));
+        let hexadecimal = signum().and(string("0x")).then(|(sgn, _)| {
+                many1(hex_digit().or(char('_'))).map(move |digits| parse_bigint(sgn, digits, 16))
+            });
+        let binary = signum().and(string("0b")).then(|(sgn, _)| {
+                many1(char('0').or(char('1')).or(char('_'))).map(move |digits| parse_bigint(sgn, digits, 2))
+            });
+        let float = signum().then(|sgn| {
+            optional(many1(digit().or(char('_'))))
+                .skip(char('.'))
+                .and(many1(digit().or(char('_'))))
+                .map(move |(l, r)| parse_float(sgn, l, r))
+        });
+
+        let array = between(lex_char('['), lex_char(']'), many(recur())).map(Value::Array);
+
+        let tagged = char('#').and(ident).skip(spaces()).then(
+            |(_, id): (_, String)| {
+                let id_c = Cow::from(id);
+                recur().map(move |x| Value::Tagged(id_c.as_ref().to_owned(), Box::new(x)))
+            },
+        );
+
+        let expr = tagged
+            .or(void)
+            .or(try(hexadecimal))
+            .or(try(binary))
+            .or(try(float))
+            .or(decimal)
+            .or(array);
+        spaces()
+            .and(expr.skip(spaces()))
+            .map(|(_, x)| x)
+            .parse_stream(input)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    //use num::*;
-    use pest::StringInput;
+    use num::*;
+    use super::value::*;
+    use super::parser;
 
     fn eval(x: &str) -> Value {
-        let mut parser = Rdp::new(StringInput::new(x));
-        assert!(parser.expression());
-        parser.eval().unwrap()
+        let (result, _) = parser::eval(x).unwrap();
+        result
     }
 
     fn int(x: &[u8], radix: u32) -> Value {
@@ -207,8 +211,14 @@ mod tests {
         assert_eq!(Value::Array(List::new()), eval("[]"));
         assert_eq!(arr(vec![int(b"1", 10)]), eval("[1]"));
         assert_eq!(arr(vec![int(b"1", 10), int(b"2", 10)]), eval("[1 2]"));
-        //assert_eq!(arr(vec![Value::Tagged("x".to_owned(), Box::new(int(b"1", 10))), arr(vec![int(b"123", 10)]), int(b"2", 10), Value::Void, int(b"3", 10)]), eval("[	#x 1 [\n123\r\n] 2 		() 3]"));
-        // XXX: nested arrays are broken
+        assert_eq!(
+            arr(vec![Value::Tagged("x".to_owned(), Box::new(int(b"0", 10))),
+                 arr(vec![int(b"123", 10)]),
+                 int(b"2", 10),
+                 Value::Void,
+                 int(b"3", 10)]),
+            eval(" [	#x 0 [\n123\r\n] 2 		() 3]")
+        );
     }
 
 }
