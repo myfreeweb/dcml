@@ -10,8 +10,9 @@ extern crate error_chain;
 pub mod value {
     pub use num::BigRational;
     pub use im::{List, Map};
+    use std::fmt;
 
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(PartialEq, Eq)]
     pub enum Value {
         Text(String),
         Number(BigRational),
@@ -20,6 +21,33 @@ pub mod value {
         Dict(Map<String, Value>),
         Tagged(String, Box<Value>),
         Void,
+    }
+
+    impl fmt::Debug for Value {
+        fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+            match self {
+                &Value::Text(ref x) => write!(f, "\"{}\"", x),
+                &Value::Number(ref x) => write!(f, "{}", x),
+                &Value::Boolean(x) => write!(f, "{}", x),
+                &Value::Array(ref x) => {
+                    write!(f, "[ ")?;
+                    for y in x {
+                        write!(f, "{:?}; ", y)?;
+                    }
+                    write!(f, "]")
+                },
+                &Value::Dict(ref x) => {
+                    write!(f, "{{ ")?;
+                    for (k, v) in x {
+                        write!(f, "{}: {:?}; ", k, v)?;
+                    }
+                    write!(f, "}}")
+
+                },
+                &Value::Tagged(ref t, ref x) => write!(f, "(#{} {:?})", t, x),
+                &Value::Void => write!(f, "()"),
+            }
+        }
     }
 }
 
@@ -100,7 +128,7 @@ impl_rdp! {
         }
 
         _array(&self) -> Result<List<Value>> {
-            (_: arritem, head: eval(), tail: _array()) => { println!("{:?}, {:?}", head, tail); Ok(tail?.push_front(head?)) },
+            (_: arritem, head: eval(), tail: _array()) => { Ok(tail?.push_front(head?)) },
             () => { Ok(List::new()) },
         }
     }
