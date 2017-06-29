@@ -1,4 +1,5 @@
 extern crate num;
+#[macro_use]
 extern crate im;
 extern crate combine;
 extern crate combine_language;
@@ -60,7 +61,12 @@ pub mod parser {
 
     #[inline]
     fn bigint(sgn: Option<char>, digits: String, radix: u32) -> Result<BigInt, ParseBigIntError> {
-        BigInt::from_str_radix(&(sgn.map(|x: char| x.to_string()).unwrap_or_else(|| "".to_string()) + &digits.replace("_", "")), radix)
+        BigInt::from_str_radix(
+            &(sgn.map(|x: char| x.to_string()).unwrap_or_else(
+                || "".to_string(),
+            ) + &digits.replace("_", "")),
+            radix,
+        )
     }
 
     #[inline]
@@ -74,7 +80,9 @@ pub mod parser {
 
     #[inline]
     fn float(sgn: Option<char>, l: Option<String>, r: String) -> Result<f64, std::num::ParseFloatError> {
-        (sgn.map(|x: char| x.to_string()).unwrap_or_else(|| "".to_string()) + &l.unwrap_or_else(|| "0".to_string()) + "." + &r)
+        (sgn.map(|x: char| x.to_string()).unwrap_or_else(
+            || "".to_string(),
+        ) + &l.unwrap_or_else(|| "0".to_string()) + "." + &r)
             .replace("_", "")
             .parse::<f64>()
     }
@@ -128,7 +136,7 @@ pub mod parser {
     {
         let recur = || parser(eval::<I>);
         let lex_char = |c| char(c).skip(spaces());
-        let ident = many1(alpha_num());
+        let ident = || many1(alpha_num());
 
         let void = string("()").map(|_| Value::Void);
 
@@ -149,30 +157,30 @@ pub mod parser {
 
         let array = between(lex_char('['), lex_char(']'), many(recur())).map(Value::Array);
 
-        let tagged = char('#').and(ident).skip(spaces()).then(
-            |(_, id): (_, String)| {
+        let dict = between(lex_char('{'), lex_char('}'), many((ident(), recur()))).map(Value::Dict);
+
+        let tagged = char('#').and(ident()).skip(spaces()).then(|(_, id): (_,
+                       String)| {
                 let id_c = Cow::from(id);
                 recur().map(move |x| Value::Tagged(id_c.as_ref().to_owned(), Box::new(x)))
-            },
-        );
+            });
 
         let parens = between(lex_char('('), lex_char(')'), recur());
 
-        let op = strings!["+", "-", "*", "/", "%"]
-            .map(|op| {
-                (
-                    op,
-                    Assoc {
-                        precedence: match op {
-                            "+" | "-" => 69,
-                            _ => 420,
-                        },
-                        fixity: Fixity::Left,
+        let op = strings!["+", "-", "*", "/", "%"].map(|op| {
+            (
+                op,
+                Assoc {
+                    precedence: match op {
+                        "+" | "-" => 69,
+                        _ => 420,
                     },
-                )
-            });
+                    fixity: Fixity::Left,
+                },
+            )
+        });
 
-        let expr = or![try(void), parens, array, tagged, try(hexadecimal), try(binary), try(float), decimal];
+        let expr = or![try(void), parens, array, dict, tagged, try(hexadecimal), try(binary), try(float), decimal];
         let expr_with_spaces = spaces().and(expr).map(|(_, x)| x).skip(spaces());
         expression_parser(expr_with_spaces, op, apply_op).parse_stream(input)
     }
@@ -194,7 +202,10 @@ mod tests {
     }
 
     fn rat(numer: &[u8], denom: &[u8], radix: u32) -> Value {
-        Value::Number(BigRational::new(BigInt::parse_bytes(numer, radix).unwrap(), BigInt::parse_bytes(denom, radix).unwrap()))
+        Value::Number(BigRational::new(
+            BigInt::parse_bytes(numer, radix).unwrap(),
+            BigInt::parse_bytes(denom, radix).unwrap(),
+        ))
     }
 
     fn arr(x: Vec<Value>) -> Value {
@@ -266,6 +277,19 @@ mod tests {
                  Value::Void,
                  int(b"3", 10)]),
             eval(" [	#x 0 [\n123\r\n] 2 		() 3]")
+        );
+    }
+
+    #[test]
+    fn test_dict() {
+        assert_eq!(Value::Dict(Map::new()), eval("{}"));
+        assert_eq!(Value::Dict(map!{ "thing".to_owned() => int(b"1", 10) }), eval("{ thing 1 }"));
+        assert_eq!(
+            Value::Dict(map!{
+                "thing".to_owned() => arr(vec![int(b"1", 10)]),
+                "otherThing".to_owned() => Value::Tagged("test".to_owned(), Box::new(Value::Dict(map!{})))
+            }),
+            eval("{ thing \r\n[1] 	otherThing #test { } }")
         );
     }
 
