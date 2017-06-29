@@ -3,6 +3,7 @@ name = "dcml"
 version = "0.0.0"
 dependencies = [
  "combine 2.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "combine-language 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "im 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "num 0.1.39 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -18,6 +19,14 @@ version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "ascii 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "combine-language"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "combine 2.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -112,6 +121,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [metadata]
 "checksum ascii 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "3ae7d751998c189c1d4468cf0a39bb2eae052a9c58d50ebb3b9591ee3813ad50"
 "checksum combine 2.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "0d4e2b2f3e0e68b531bd90f79c0c897f2da8de4109fc1dd7cd427990621dd2d0"
+"checksum combine-language 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "72e1ce928af3882662d53b59caa64117876ca4f791df5a00ae02f2b46bc433a6"
 "checksum im 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a11ed61a93503d53b0682968192f7d770676598ad9d6a3e82245f38a78cd483e"
 "checksum libc 0.2.24 (registry+https://github.com/rust-lang/crates.io-index)" = "38f5c2b18a287cf78b4097db62e20f43cace381dc76ae5c0a3073067f78b7ddc"
 "checksum num 0.1.39 (registry+https://github.com/rust-lang/crates.io-index)" = "2c3a3dc9f30bf824141521b30c908a859ab190b76e20435fcd89f35eb6583887"

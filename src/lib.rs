@@ -1,6 +1,7 @@
 extern crate num;
 extern crate im;
 extern crate combine;
+extern crate combine_language;
 
 pub mod value {
     pub use num::{BigInt, BigRational};
@@ -20,27 +21,26 @@ pub mod value {
 
     impl fmt::Debug for Value {
         fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-            match self {
-                &Value::Text(ref x) => write!(f, "\"{}\"", x),
-                &Value::Number(ref x) => write!(f, "{}", x),
-                &Value::Boolean(x) => write!(f, "{}", x),
-                &Value::Array(ref x) => {
+            match *self {
+                Value::Text(ref x) => write!(f, "\"{}\"", x),
+                Value::Number(ref x) => write!(f, "{}", x),
+                Value::Boolean(x) => write!(f, "{}", x),
+                Value::Array(ref x) => {
                     write!(f, "[ ")?;
                     for y in x {
                         write!(f, "{:?}; ", y)?;
                     }
                     write!(f, "]")
                 },
-                &Value::Dict(ref x) => {
+                Value::Dict(ref x) => {
                     write!(f, "{{ ")?;
                     for (k, v) in x {
                         write!(f, "{}: {:?}; ", k, v)?;
                     }
                     write!(f, "}}")
-
                 },
-                &Value::Tagged(ref t, ref x) => write!(f, "(#{} {:?})", t, x),
-                &Value::Void => write!(f, "()"),
+                Value::Tagged(ref t, ref x) => write!(f, "(#{} {:?})", t, x),
+                Value::Void => write!(f, "()"),
             }
         }
     }
@@ -56,10 +56,11 @@ pub mod parser {
     use combine::primitives::{ParseResult, Stream};
     use combine::combinator::{between, many, many1, optional, try, parser};
     use combine::char::{alpha_num, digit, hex_digit, spaces, char, string};
+    use combine_language::{expression_parser, Assoc, Fixity};
 
     #[inline]
     fn bigint(sgn: Option<char>, digits: String, radix: u32) -> Result<BigInt, ParseBigIntError> {
-        BigInt::from_str_radix(&(sgn.map(|x: char| x.to_string()).unwrap_or("".to_string()) + &digits.replace("_", "")), radix)
+        BigInt::from_str_radix(&(sgn.map(|x: char| x.to_string()).unwrap_or_else(|| "".to_string()) + &digits.replace("_", "")), radix)
     }
 
     #[inline]
@@ -73,7 +74,7 @@ pub mod parser {
 
     #[inline]
     fn float(sgn: Option<char>, l: Option<String>, r: String) -> Result<f64, std::num::ParseFloatError> {
-        (sgn.map(|x: char| x.to_string()).unwrap_or("".to_string()) + &l.unwrap_or("0".to_string()) + "." + &r)
+        (sgn.map(|x: char| x.to_string()).unwrap_or_else(|| "".to_string()) + &l.unwrap_or_else(|| "0".to_string()) + "." + &r)
             .replace("_", "")
             .parse::<f64>()
     }
@@ -91,6 +92,36 @@ pub mod parser {
         }
     }
 
+    fn apply_op(l: Value, op: &'static str, r: Value) -> Value {
+        match (l, r) {
+            (Value::Number(ln), Value::Number(rn)) => {
+                match op {
+                    "+" => Value::Number(ln + rn),
+                    "-" => Value::Number(ln - rn),
+                    "*" => Value::Number(ln * rn),
+                    "/" => Value::Number(ln / rn),
+                    "%" => Value::Number(ln % rn),
+                    _ => unreachable!(),
+                }
+            },
+            (Value::Tagged(t, lv), rv) => Value::Tagged(t, Box::new(apply_op(*lv, op, rv))),
+            (lv, Value::Tagged(t, rv)) => Value::Tagged(t, Box::new(apply_op(lv, op, *rv))),
+            _ => Value::Void,
+        }
+    }
+
+    macro_rules! or {
+        ($head:expr) => { $head };
+        ($head:expr, $($tail:expr),+) => { $head$(.or($tail))* };
+    }
+
+    macro_rules! chars {
+        ($($ch:expr),+) => { or![$(char($ch)),*] };
+    }
+
+    macro_rules! strings {
+        ($($str:expr),+) => { or![$(string($str)),*] };
+    }
 
     pub fn eval<I>(input: I) -> ParseResult<Value, I>
         where I: Stream<Item = char>
@@ -101,13 +132,13 @@ pub mod parser {
 
         let void = string("()").map(|_| Value::Void);
 
-        let signum = || optional(char('-').or(char('+')));
+        let signum = || optional(chars!['-', '+']);
         let decimal = signum().then(|sgn| many1(digit().or(char('_'))).map(move |digits| parse_bigint(sgn, digits, 10)));
         let hexadecimal = signum().and(string("0x")).then(|(sgn, _)| {
                 many1(hex_digit().or(char('_'))).map(move |digits| parse_bigint(sgn, digits, 16))
             });
         let binary = signum().and(string("0b")).then(|(sgn, _)| {
-                many1(char('0').or(char('1')).or(char('_'))).map(move |digits| parse_bigint(sgn, digits, 2))
+                many1(chars!['_', '0', '1']).map(move |digits| parse_bigint(sgn, digits, 2))
             });
         let float = signum().then(|sgn| {
             optional(many1(digit().or(char('_'))))
@@ -125,17 +156,25 @@ pub mod parser {
             },
         );
 
-        let expr = tagged
-            .or(void)
-            .or(try(hexadecimal))
-            .or(try(binary))
-            .or(try(float))
-            .or(decimal)
-            .or(array);
-        spaces()
-            .and(expr.skip(spaces()))
-            .map(|(_, x)| x)
-            .parse_stream(input)
+        let parens = between(lex_char('('), lex_char(')'), recur());
+
+        let op = strings!["+", "-", "*", "/", "%"]
+            .map(|op| {
+                (
+                    op,
+                    Assoc {
+                        precedence: match op {
+                            "+" | "-" => 69,
+                            _ => 420,
+                        },
+                        fixity: Fixity::Left,
+                    },
+                )
+            });
+
+        let expr = or![try(void), parens, array, tagged, try(hexadecimal), try(binary), try(float), decimal];
+        let expr_with_spaces = spaces().and(expr).map(|(_, x)| x).skip(spaces());
+        expression_parser(expr_with_spaces, op, apply_op).parse_stream(input)
     }
 }
 
@@ -199,6 +238,15 @@ mod tests {
         assert_eq!(rat(b"-1", b"2", 10), eval("-0.5"));
         assert_eq!(rat(b"1", b"2", 10), eval("0.5"));
         assert_eq!(rat(b"1", b"2", 10), eval("._5"));
+    }
+
+    #[test]
+    fn test_arith() {
+        assert_eq!(rat(b"-75", b"2", 10), eval(" 2.5* -0xF	"));
+        assert_eq!(int(b"6", 10), eval("420%69"));
+        assert_eq!(int(b"6", 10), eval("\n(1 + 2) *2"));
+        assert_eq!(int(b"5", 10), eval("\n1+ 2 \r*\n	2"));
+        assert_eq!(Value::Tagged("test".to_owned(), Box::new(int(b"5", 10))), eval("1+ #test 2*2"));
     }
 
     #[test]
