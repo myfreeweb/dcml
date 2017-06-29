@@ -74,7 +74,11 @@ pub mod parser {
         if let Ok(bint) = bigint(sgn, digits, radix) {
             Value::Number(BigRational::from_integer(bint))
         } else {
-            panic!("BigInt parse");
+            if cfg!(test) {
+                panic!("BigInt parse");
+            } else {
+                Value::Void
+            }
         }
     }
 
@@ -93,10 +97,18 @@ pub mod parser {
             if let Some(br) = BigRational::from_float(f) {
                 Value::Number(br)
             } else {
-                panic!("BigRational from float");
+                if cfg!(test) {
+                    panic!("BigRational from float");
+                } else {
+                    Value::Void
+                }
             }
         } else {
-            panic!("float parse");
+            if cfg!(test) {
+                panic!("float parse");
+            } else {
+                Value::Void
+            }
         }
     }
 
