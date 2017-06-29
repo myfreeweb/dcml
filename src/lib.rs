@@ -112,6 +112,18 @@ pub mod parser {
                     _ => unreachable!(),
                 }
             },
+            (Value::Array(lv), Value::Array(rv)) => {
+                match op {
+                    "+" => Value::Array(lv + rv),
+                    _ => Value::Void,
+                }
+            },
+            (Value::Dict(lv), Value::Dict(rv)) => {
+                match op {
+                    "+" => Value::Dict(lv.union(&rv)),
+                    _ => Value::Void,
+                }
+            },
             (Value::Tagged(t, lv), rv) => Value::Tagged(t, Box::new(apply_op(*lv, op, rv))),
             (lv, Value::Tagged(t, rv)) => Value::Tagged(t, Box::new(apply_op(lv, op, *rv))),
             _ => Value::Void,
@@ -281,6 +293,11 @@ mod tests {
     }
 
     #[test]
+    fn test_array_plus() {
+        assert_eq!(arr(vec![int(b"1", 10), int(b"2", 10)]), eval("[1] + [] + [2]"));
+    }
+
+    #[test]
     fn test_dict() {
         assert_eq!(Value::Dict(Map::new()), eval("{}"));
         assert_eq!(Value::Dict(map!{ "thing".to_owned() => int(b"1", 10) }), eval("{ thing 1 }"));
@@ -290,6 +307,17 @@ mod tests {
                 "otherThing".to_owned() => Value::Tagged("test".to_owned(), Box::new(Value::Dict(map!{})))
             }),
             eval("{ thing \r\n[1] 	otherThing #test { } }")
+        );
+    }
+
+    #[test]
+    fn test_dict_plus() {
+        assert_eq!(
+            Value::Dict(map!{
+                "thing".to_owned() => int(b"1", 10),
+                "other".to_owned() => int(b"2", 10)
+            }),
+            eval("{ thing 1 } + { other 2 } + {}")
         );
     }
 
