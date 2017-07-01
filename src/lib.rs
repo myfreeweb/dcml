@@ -45,17 +45,45 @@ pub mod value {
             }
         }
     }
+
+    impl fmt::Display for Value {
+        fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+            match *self {
+                Value::Text(ref x) => write!(f, "{}", x),
+                Value::Number(ref x) => write!(f, "{}", x),
+                Value::Boolean(x) => write!(f, "{}", x),
+                Value::Array(ref x) => {
+                    write!(f, "[")?;
+                    for y in x {
+                        write!(f, "{}", y)?;
+                    }
+                    write!(f, "]")
+                },
+                Value::Dict(ref x) => {
+                    write!(f, "{{")?;
+                    for (k, v) in x {
+                        write!(f, "{} {} ", k, v)?;
+                    }
+                    write!(f, "}}")
+                },
+                Value::Tagged(ref t, ref x) => write!(f, "#{} {}", t, x),
+                Value::Void => write!(f, "()"),
+            }
+        }
+    }
+
 }
 
 pub mod parser {
     use std;
     use std::borrow::Cow;
+    use std::char;
     use num::*;
     use num::bigint::ParseBigIntError;
     use super::value::*;
     use combine::Parser;
     use combine::primitives::{ParseResult, Stream};
-    use combine::combinator::{between, many, many1, optional, try, parser};
+    use combine::combinator::{between, many, many1, optional, try, satisfy, parser};
     use combine::char::{alpha_num, digit, hex_digit, spaces, char, string};
     use combine_language::{expression_parser, Assoc, Fixity};
 
@@ -124,6 +152,12 @@ pub mod parser {
                     _ => unreachable!(),
                 }
             },
+            (Value::Text(lv), Value::Text(rv)) => {
+                match op {
+                    "+" => Value::Text(lv + &rv),
+                    _ => Value::Void,
+                }
+            },
             (Value::Array(lv), Value::Array(rv)) => {
                 match op {
                     "+" => Value::Array(lv + rv),
@@ -179,9 +213,52 @@ pub mod parser {
                 .map(move |(l, r)| parse_float(sgn, l, r))
         });
 
+        let escape = || {
+            char('\\')
+                .and(or![char('"').map(|_| '\"'),
+                    char('\\').map(|_| '\\'),
+                    char('/').map(|_| '/'),
+                    char('$').map(|_| '$'),
+                    char('b').map(|_| '\x08'),
+                    char('f').map(|_| '\x0C'),
+                    char('n').map(|_| '\n'),
+                    char('r').map(|_| '\r'),
+                    char('t').map(|_| '\t'),
+                    (char('u'), many1(hex_digit())).map(|(_, ds): (_, String)| {
+                    char::from_u32(u32::from_str_radix(&ds, 16).unwrap_or(0xFFFD)).unwrap_or('�')
+                })])
+                .map(|(_, x)| x)
+        };
+        let quoted_string_bare = || between(char('"'), char('"'), many(escape().or(satisfy(|c| c != '"'))));
+        let quoted_string = quoted_string_bare().map(Value::Text);
+        let interpolation = || {
+            char('$')
+                .skip(char('{'))
+                .and(recur())
+                .skip(char('}'))
+                .map(|(_, x)| format!("{}", x))
+        };
+        let interpolated_string_bare = || {
+            between(
+                char('`'),
+                char('`'),
+                many(
+                    escape()
+                        .map(|x| format!("{}", x))
+                        .or(interpolation())
+                        .or(many1(satisfy(|c| c != '`' && c != '\\' && c != '$'))),
+                ),
+            ).map(|ss: Vec<String>| ss.join(""))
+        };
+        let interpolated_string = interpolated_string_bare().map(Value::Text);
+
         let array = between(lex_char('['), lex_char(']'), many(recur())).map(Value::Array);
 
-        let dict = between(lex_char('{'), lex_char('}'), many((ident(), recur()))).map(Value::Dict);
+        let dict = between(
+            lex_char('{'),
+            lex_char('}'),
+            many((or![ident(), quoted_string_bare(), interpolated_string_bare()], recur())),
+        ).map(Value::Dict);
 
         let tagged = char('#').and(ident()).skip(spaces()).then(|(_, id): (_,
                        String)| {
@@ -204,7 +281,7 @@ pub mod parser {
             )
         });
 
-        let expr = or![try(void), parens, array, dict, tagged, try(hexadecimal), try(binary), try(float), decimal];
+        let expr = or![try(void), parens, array, dict, tagged, quoted_string, interpolated_string, try(hexadecimal), try(binary), try(float), decimal];
         let expr_with_spaces = spaces().and(expr).map(|(_, x)| x).skip(spaces());
         expression_parser(expr_with_spaces, op, apply_op).parse_stream(input)
     }
@@ -285,6 +362,24 @@ mod tests {
     }
 
     #[test]
+    fn test_text() {
+        assert_eq!(Value::Text("".to_owned()), eval(r#" "" "#));
+        assert_eq!(Value::Text("\n	💯:)".to_owned()), eval(r#" "\n\t\u1F4AF\u003a\u0029" "#));
+        assert_eq!(Value::Text("hello\nworld\n!!".to_owned()),
+            eval(
+                r#" "hello
+world\n!!" "#,
+            ));
+        assert_eq!(Value::Text("hello 2 world".to_owned()), eval(r#" `hello ${1 + 1} world` "#));
+        assert_eq!(Value::Text("some\r\ntext$".to_owned()), eval(r#" `some${ 	`${"\r"}\n` }text\$` "#));
+    }
+
+    #[test]
+    fn test_text_plus() {
+        assert_eq!(Value::Text("dank  memes".to_owned()), eval(r#" ""+"dank" +	" " +  " " + "memes" +"" "#));
+    }
+
+    #[test]
     fn test_tagged() {
         assert_eq!(Value::Tagged("testTag".to_owned(), Box::new(Value::Void)), eval("#testTag ()"));
     }
@@ -319,6 +414,10 @@ mod tests {
                 "otherThing".to_owned() => Value::Tagged("test".to_owned(), Box::new(Value::Dict(map!{})))
             }),
             eval("{ thing \r\n[1] 	otherThing #test { } }")
+        );
+        assert_eq!(
+            Value::Dict(map!{ "twotimes2".to_owned() => int(b"4", 10), "my thing".to_owned() => Value::Text("something".to_owned()) }),
+            eval("{ `twotimes${1 + 1}` (1 + 1) * 2 \"my thing\" \"some\" + \"thing\" }")
         );
     }
 
