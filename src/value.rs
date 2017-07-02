@@ -2,7 +2,7 @@ pub use num::{BigInt, BigRational};
 pub use im::{List, Map};
 use std::fmt;
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum Value {
     Text(String),
     Number(BigRational),
@@ -11,6 +11,21 @@ pub enum Value {
     Dict(Map<String, Value>),
     Tagged(String, Box<Value>),
     Void,
+}
+
+pub fn int(x: &[u8], radix: u32) -> Value {
+    Value::Number(BigRational::from_integer(BigInt::parse_bytes(x, radix).unwrap()))
+}
+
+pub fn rat(numer: &[u8], denom: &[u8], radix: u32) -> Value {
+    Value::Number(BigRational::new(
+        BigInt::parse_bytes(numer, radix).unwrap(),
+        BigInt::parse_bytes(denom, radix).unwrap(),
+    ))
+}
+
+pub fn arr(x: Vec<Value>) -> Value {
+    Value::Array(List::from(x))
 }
 
 impl fmt::Debug for Value {

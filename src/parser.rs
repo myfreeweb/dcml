@@ -220,21 +220,6 @@ mod tests {
         result
     }
 
-    fn int(x: &[u8], radix: u32) -> Value {
-        Value::Number(BigRational::from_integer(BigInt::parse_bytes(x, radix).unwrap()))
-    }
-
-    fn rat(numer: &[u8], denom: &[u8], radix: u32) -> Value {
-        Value::Number(BigRational::new(
-            BigInt::parse_bytes(numer, radix).unwrap(),
-            BigInt::parse_bytes(denom, radix).unwrap(),
-        ))
-    }
-
-    fn arr(x: Vec<Value>) -> Value {
-        Value::Array(List::from(x))
-    }
-
     #[test]
     fn test_void() {
         assert_eq!(Value::Void, eval("()"));
