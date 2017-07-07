@@ -112,12 +112,27 @@ macro_rules! strings {
     ($($str:expr),+) => { or![$(string($str)),*] };
 }
 
+
+
 pub fn eval<I>(input: I) -> ParseResult<Value, I>
     where I: Stream<Item = char>
 {
-    let recur = || parser(eval::<I>);
-    let line_comment = || string("//").skip(skip_many(satisfy(|c| c != '\r' && c != '\n'))).map(|_| ' ');
+    eval_internal(input, true)
+}
+
+fn eval_internal<I>(input: I, accept_bare_dict: bool) -> ParseResult<Value, I>
+    where I: Stream<Item = char>
+{
+    let recur = || parser(|input| eval_internal::<I>(input, false));
+    let line_comment = || {
+        string("//")
+            .skip(skip_many(satisfy(|c| c != '\r' && c != '\n')))
+            .map(|_| ' ')
+    };
     let whitespace = || spaces().skip(skip_many(line_comment().skip(spaces())));
+    macro_rules! with_spaces {
+        ($x:expr) => { whitespace().and($x).map(|(_, x)| x).skip(whitespace()) };
+    };
     let lex_char = |c| char(c).skip(whitespace());
     let ident = || many1(alpha_num());
 
@@ -179,14 +194,13 @@ pub fn eval<I>(input: I) -> ParseResult<Value, I>
 
     let array = between(lex_char('['), lex_char(']'), many(recur())).map(Value::Array);
 
-    let dict = between(
-        lex_char('{'),
-        lex_char('}'),
-        many((or![ident(), quoted_string_bare(), interpolated_string_bare()], recur())),
-    ).map(Value::Dict);
+    let dict_pairs = || many((or![ident(), quoted_string_bare(), interpolated_string_bare()], recur()));
+    let dict = between(lex_char('{'), lex_char('}'), dict_pairs()).map(Value::Dict);
 
-    let tagged = char('#').and(ident()).skip(whitespace()).then(|(_, id): (_,
-                   String)| {
+    let tagged = char('#')
+        .and(ident())
+        .skip(whitespace())
+        .then(|(_, id): (_, String)| {
             let id_c = Cow::from(id);
             recur().map(move |x| Value::Tagged(id_c.as_ref().to_owned(), Box::new(x)))
         });
@@ -207,8 +221,11 @@ pub fn eval<I>(input: I) -> ParseResult<Value, I>
     });
 
     let expr = or![try(void), parens, array, dict, tagged, quoted_string, interpolated_string, try(hexadecimal), try(binary), try(float), decimal];
-    let expr_with_spaces = whitespace().and(expr).map(|(_, x)| x).skip(whitespace());
-    expression_parser(expr_with_spaces, op, apply_op).parse_stream(input)
+    if accept_bare_dict {
+        expression_parser(try(with_spaces!(expr)).or(with_spaces!(dict_pairs().map(Value::Dict))), op, apply_op).parse_stream(input)
+    } else {
+        expression_parser(with_spaces!(expr), op, apply_op).parse_stream(input)
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +347,11 @@ world\n!!" "#,
             ),
             eval("{ `twotimes${1 + 1}` (1 + 1) * 2 \"my thing\" \"some\" + \"thing\" }")
         );
+        assert_eq!(
+            Value::Dict(map!{ "thing".to_owned() => int(b"1", 10), "otherThing".to_owned() => int(b"2", 10) }),
+            eval("	 thing  1\n	 otherThing 2\n")
+        );
+        assert_eq!(Value::Dict(Map::new()), eval(""));
     }
 
     #[test]
@@ -345,7 +367,10 @@ world\n!!" "#,
 
     #[test]
     fn test_comments() {
-        assert_eq!(Value::Dict(map!{ "thing".to_owned() => int(b"3", 10) }), eval("{//some \nthing 1 +	2//x\n//xx}\n}//"));
+        assert_eq!(
+            Value::Dict(map!{ "thing".to_owned() => int(b"3", 10) }),
+            eval("{//some \nthing 1 +	2//x\n//xx}\n}//")
+        );
     }
 
 

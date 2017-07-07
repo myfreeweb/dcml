@@ -40,7 +40,7 @@ TODO:
 
 - [ ] enum deserialization in serde
 - [x] comments
-- [ ] top level object without the curly braces
+- [x] top level object without the curly braces
 - [ ] number multiplier suffixes
 - [ ] variables
 - [ ] include functionality (with user pluggable resolver!)
