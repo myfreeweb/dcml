@@ -5,7 +5,7 @@ use num::*;
 use num::bigint::ParseBigIntError;
 use combine::Parser;
 use combine::primitives::{ParseResult, Stream};
-use combine::combinator::{between, many, many1, optional, try, satisfy, parser};
+use combine::combinator::{between, many, many1, skip_many, optional, try, satisfy, parser};
 use combine::char::{alpha_num, digit, hex_digit, spaces, char, string};
 use combine_language::{expression_parser, Assoc, Fixity};
 use value::*;
@@ -116,7 +116,9 @@ pub fn eval<I>(input: I) -> ParseResult<Value, I>
     where I: Stream<Item = char>
 {
     let recur = || parser(eval::<I>);
-    let lex_char = |c| char(c).skip(spaces());
+    let line_comment = || string("//").skip(skip_many(satisfy(|c| c != '\r' && c != '\n'))).map(|_| ' ');
+    let whitespace = || spaces().skip(skip_many(line_comment().skip(spaces())));
+    let lex_char = |c| char(c).skip(whitespace());
     let ident = || many1(alpha_num());
 
     let void = string("()").map(|_| Value::Void);
@@ -183,7 +185,7 @@ pub fn eval<I>(input: I) -> ParseResult<Value, I>
         many((or![ident(), quoted_string_bare(), interpolated_string_bare()], recur())),
     ).map(Value::Dict);
 
-    let tagged = char('#').and(ident()).skip(spaces()).then(|(_, id): (_,
+    let tagged = char('#').and(ident()).skip(whitespace()).then(|(_, id): (_,
                    String)| {
             let id_c = Cow::from(id);
             recur().map(move |x| Value::Tagged(id_c.as_ref().to_owned(), Box::new(x)))
@@ -205,7 +207,7 @@ pub fn eval<I>(input: I) -> ParseResult<Value, I>
     });
 
     let expr = or![try(void), parens, array, dict, tagged, quoted_string, interpolated_string, try(hexadecimal), try(binary), try(float), decimal];
-    let expr_with_spaces = spaces().and(expr).map(|(_, x)| x).skip(spaces());
+    let expr_with_spaces = whitespace().and(expr).map(|(_, x)| x).skip(whitespace());
     expression_parser(expr_with_spaces, op, apply_op).parse_stream(input)
 }
 
@@ -340,5 +342,12 @@ world\n!!" "#,
             eval("{ thing 1 } + { other 2 } + {}")
         );
     }
+
+    #[test]
+    fn test_comments() {
+        assert_eq!(Value::Dict(map!{ "thing".to_owned() => int(b"3", 10) }), eval("{//some \nthing 1 +	2//x\n//xx}\n}//"));
+    }
+
+
 
 }

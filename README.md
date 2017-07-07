@@ -10,21 +10,21 @@ Uses [im](https://github.com/bodil/im-rs)mutable data structures.
 
 ```
 {
-  simple "syntax"
+  simple "syntax" // with Rust/C style line comments
   "key value pairs" "without any colons and commas/semicolons, like clojure"
 
   arraysToo [ 1 2 3 4 "hello world" { nested "dictionary in array" } ]
 
   numbersCanBeCalculated 1.2 * 3.4
 
-  allNumbersAre "arbitrary precision rationals,
-it's a config format not a mega high performance calculator"
+  allNumbersAre "arbitrary precision rationals"
+  // it's a config format not a mega high performance calculator
 
   binaryAndHexLiterals 0xff + 0b0011
 
-  underscoresInNumbers 0xffff * 1_000_000
+  underscoresInNumbers 0xf__ff___f_ * 1_000_000
 
-  interpolatedStrings `with ES6 like syntax ${123 * 1000 + 456}`
+  interpolatedStrings `with ES6 like syntax ${123 * 1_000 + 456}`
 
   escapesInStrings "like json\u003a\u0029\nbut you don't *have* to escape control characters
 which means that strings are multiline
@@ -39,7 +39,7 @@ and the unicode escape is not limited to 4 digits \u1F4AF"
 TODO:
 
 - [ ] enum deserialization in serde
-- [ ] comments
+- [x] comments
 - [ ] top level object without the curly braces
 - [ ] number multiplier suffixes
 - [ ] variables
@@ -57,3 +57,5 @@ By participating in this project you agree to follow the [Contributor Code of Co
 
 This is free and unencumbered software released into the public domain.  
 For more information, please refer to the `UNLICENSE` file or [unlicense.org](http://unlicense.org).
+
+Note that third party dependencies are licensed under different terms.
